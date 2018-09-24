@@ -21,7 +21,7 @@ const (
 )
 
 // LSMData contains all the values measured by an LSM9DS1.
-type MPUData struct {
+type LSMData struct {
 	G1, G2, G3        float64
 	A1, A2, A3        float64
 	M1, M2, M3        float64
