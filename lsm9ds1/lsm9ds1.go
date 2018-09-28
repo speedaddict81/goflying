@@ -1,7 +1,5 @@
 package lsm9ds1
 
-// Approach adapted from the InvenSense DMP 6.1 drivers
-// Also referenced https://github.com/brianc118/MPU9250/blob/master/MPU9250.cpp
 
 import (
 	"errors"
@@ -32,7 +30,25 @@ type LSMData struct {
 	DT, DTM           time.Duration
 }
 
-//*******Probably Don't Need These***************\\
+/*
+LSM9DS1 represents an Ozzmaker BerryIMU 2 w/LSM9DS1 9DoF chip.
+All communication is via channels.
+*/
+type LSM9DS1 struct {
+	i2cbus                embd.I2CBus
+	scaleGyro, scaleAccel float64         // Max sensor reading for value 2**15-1
+	sampleRate            int             // Sample rate for sensor readings, Hz
+	enableMag             bool            // Read the magnetometer?
+	mcal1, mcal2, mcal3   float64         // Hardware magnetometer calibration values, uT
+	a01, a02, a03         float64         // Hardware accelerometer calibration values, G
+	g01, g02, g03         float64         // Hardware gyro calibration values, °/s
+	C                     <-chan *LSMData // Current instantaneous sensor values
+	CAvg                  <-chan *LSMData // Average sensor values (since CAvg last read)
+	CBuf                  <-chan *LSMData // Buffer of instantaneous sensor values
+	cClose                chan bool       // Turn off MPU polling
+}
+
+/*******Probably Don't Need These***************\
 // EnableGyroBiasCal enables or disables motion bias compensation for the gyro.
 // For flying we generally do not want this!
 // func (mpu *MPU9250) EnableGyroBiasCal(enable bool) error {
@@ -77,3 +93,101 @@ type LSMData struct {
 
 // 	return nil
 // }
+
+
+//**********Gyro and Accel Bias**********\\
+// ReadAccelBias reads the bias accelerometer value stored on the chip.
+// These values are set at the factory.
+func (mpu *MPU9250) ReadAccelBias(sensitivityAccel int) error {
+	a0x, err := mpu.i2cRead2(MPUREG_XA_OFFSET_H)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
+	}
+	a0y, err := mpu.i2cRead2(MPUREG_YA_OFFSET_H)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
+	}
+	a0z, err := mpu.i2cRead2(MPUREG_ZA_OFFSET_H)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
+	}
+
+	switch sensitivityAccel {
+	case 16:
+		mpu.a01 = float64(a0x >> 1)
+		mpu.a02 = float64(a0y >> 1)
+		mpu.a03 = float64(a0z >> 1)
+	case 8:
+		mpu.a01 = float64(a0x)
+		mpu.a02 = float64(a0y)
+		mpu.a03 = float64(a0z)
+	case 4:
+		mpu.a01 = float64(a0x << 1)
+		mpu.a02 = float64(a0y << 1)
+		mpu.a03 = float64(a0z << 1)
+	case 2:
+		mpu.a01 = float64(a0x << 2)
+		mpu.a02 = float64(a0y << 2)
+		mpu.a03 = float64(a0z << 2)
+	default:
+		return fmt.Errorf("MPU9250 Error: %d is not a valid acceleration sensitivity", sensitivityAccel)
+	}
+
+	log.Printf("MPU9250 Info: accel hardware bias read: %6f %6f %6f\n", mpu.a01, mpu.a02, mpu.a03)
+	return nil
+}
+
+// ReadGyroBias reads the bias gyro value stored on the chip.
+// These values are set at the factory.
+func (mpu *MPU9250) ReadGyroBias(sensitivityGyro int) error {
+	g0x, err := mpu.i2cRead2(MPUREG_XG_OFFS_USRH)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
+	}
+	g0y, err := mpu.i2cRead2(MPUREG_YG_OFFS_USRH)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
+	}
+	g0z, err := mpu.i2cRead2(MPUREG_ZG_OFFS_USRH)
+	if err != nil {
+		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
+	}
+
+	switch sensitivityGyro {
+	case 2000:
+		mpu.g01 = float64(g0x >> 1)
+		mpu.g02 = float64(g0y >> 1)
+		mpu.g03 = float64(g0z >> 1)
+	case 1000:
+		mpu.g01 = float64(g0x)
+		mpu.g02 = float64(g0y)
+		mpu.g03 = float64(g0z)
+	case 500:
+		mpu.g01 = float64(g0x << 1)
+		mpu.g02 = float64(g0y << 1)
+		mpu.g03 = float64(g0z << 1)
+	case 250:
+		mpu.g01 = float64(g0x << 2)
+		mpu.g02 = float64(g0y << 2)
+		mpu.g03 = float64(g0z << 2)
+	default:
+		return fmt.Errorf("MPU9250 Error: %d is not a valid gyro sensitivity", sensitivityGyro)
+	}
+
+	log.Printf("MPU9250 Info: Gyro hardware bias read: %6f %6f %6f\n", mpu.g01, mpu.g02, mpu.g03)
+	return nil
+}
+*/
+
+//TODO: We'll prefer to use the bare ReadWord function
+func (lsm *LSM9DS1) i2cRead2(register byte) (value int16, err error) {
+
+	v, errWrite := lsm.i2cbus.ReadWordFromReg(LSM_ADDRESS, register)
+	if errWrite != nil {
+		err = fmt.Errorf("LSM9DS1 Error reading %x: %s\n", register, err)
+	} else {
+		value = int16(v)
+	}
+	return
+}
+
