@@ -48,50 +48,241 @@ type LSM9DS1 struct {
 	cClose                chan bool       // Turn off MPU polling
 }
 
+/*
+NewLSM9DS1 creates a new LSM9DS1 object according to the supplied parameters.  If there is no LSM9DS1 available or there
+is an error creating the object, an error is returned.
+*/
+func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag bool, applyHWOffsets bool) (*LSM9DS1, error) {
+	var lsm = new(LSM9DS1)
+
+	lsm.sampleRate = sampleRate
+	lsm.enableMag = enableMag
+
+	lsm.i2cbus = embd.NewI2CBus(1)
+
+	//*****Chip Initialization******\\
+	//TODO Use LSM Chip initialization as needed (set ODR, sleep mode setting, etc)
+
+	// Initialization of MPU
+	// Reset device.
+	//TODO Determine if needed
+	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, BIT_H_RESET); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error resetting LSM9DS1: %s", err))
+	// }
+
+	//TODO Determine if needed
+	// Note: the following is in inv_mpu.c, but doesn't appear to be necessary from the MPU-9250 register map.
+	// Wake up chip.
+	// time.Sleep(100 * time.Millisecond)
+	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, 0x00); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error waking LSM9DS1: %s", err))
+	// }
+
+	// Note: inv_mpu.c sets some registers here to allocate 1kB to the FIFO buffer and 3kB to the DMP.
+	// It doesn't seem to be supported in the 1.6 version of the register map and we're not using FIFO anyway,
+	// so we skip this.
+	// Don't let FIFO overwrite DMP data
+	// if err := mpu.i2cWrite(MPUREG_ACCEL_CONFIG_2, BIT_FIFO_SIZE_1024|0x8); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	// }
+
+	// Set Gyro and Accel sensitivities
+	if err := lsm.SetGyroSensitivity(sensitivityGyro); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 gyro sensitivity: %s", err))
+	}
+
+	if err := lsm.SetAccelSensitivity(sensitivityAccel); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 accel sensitivity: %s", err))
+	}
+
+	//TODO WIP Determine LSM-MPU differences
+	sampRate := byte(1000/mpu.sampleRate - 1)
+	// Default: Set Gyro LPF to half of sample rate
+	if err := mpu.SetGyroLPF(sampRate >> 1); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Gyro LPF: %s", err))
+	}
+
+	// Default: Set Accel LPF to half of sample rate
+	if err := mpu.SetAccelLPF(sampRate >> 1); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Accel LPF: %s", err))
+	}
+
+	// Set sample rate to chosen
+	if err := mpu.SetSampleRate(sampRate); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Sample Rate: %s", err))
+	}
+
+	// Turn off FIFO buffer
+	if err := mpu.i2cWrite(MPUREG_FIFO_EN, 0x00); err != nil {
+		return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable FIFO: %s", err))
+	}
+
+	// Turn off interrupts
+	if err := mpu.i2cWrite(MPUREG_INT_ENABLE, 0x00); err != nil {
+		return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable interrupts: %s", err))
+	}
+
+	// Set up magnetometer
+	if mpu.enableMag {
+		if err := mpu.ReadMagCalibration(); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error reading calibration from magnetometer: %s", err))
+		}
+
+		// Set up AK8963 master mode, master clock and ES bit
+		if err := mpu.i2cWrite(MPUREG_I2C_MST_CTRL, 0x40); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Slave 0 reads from AK8963
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_ADDR, BIT_I2C_READ|AK8963_I2C_ADDR); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Compass reads start at this register
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_REG, AK8963_ST1); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Enable 8-byte reads on slave 0
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_CTRL, BIT_SLAVE_EN|8); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Slave 1 can change AK8963 measurement mode
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_ADDR, AK8963_I2C_ADDR); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_REG, AK8963_CNTL1); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Enable 1-byte reads on slave 1
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_CTRL, BIT_SLAVE_EN|1); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Set slave 1 data
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_DO, AKM_SINGLE_MEASUREMENT); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+		// Triggers slave 0 and 1 actions at each sample
+		if err := mpu.i2cWrite(MPUREG_I2C_MST_DELAY_CTRL, 0x03); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+
+		// Set AK8963 sample rate to same as gyro/accel sample rate, up to max
+		var ak8963Rate byte
+		if mpu.sampleRate < AK8963_MAX_SAMPLE_RATE {
+			ak8963Rate = 0
+		} else {
+			ak8963Rate = byte(mpu.sampleRate/AK8963_MAX_SAMPLE_RATE - 1)
+		}
+
+		// Not so sure of this one--I2C Slave 4??!
+		if err := mpu.i2cWrite(MPUREG_I2C_SLV4_CTRL, ak8963Rate); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		}
+
+		time.Sleep(100 * time.Millisecond) // Make sure mag is ready
+	}
+
+	// Set clock source to PLL
+	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, INV_CLK_PLL); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	}
+	// Turn off all sensors -- Not sure if necessary, but it's in the InvenSense DMP driver
+	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x63); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	}
+	time.Sleep(100 * time.Millisecond)
+	// Turn on all gyro, all accel
+	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x00); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	}
+
+	if applyHWOffsets {
+		if err := mpu.ReadAccelBias(sensitivityAccel); err != nil {
+			return nil, err
+		}
+		if err := mpu.ReadGyroBias(sensitivityGyro); err != nil {
+			return nil, err
+		}
+	}
+
+	// Usually we don't want the automatic gyro bias compensation - it pollutes the gyro in a non-inertial frame.
+	if err := mpu.EnableGyroBiasCal(false); err != nil {
+		return nil, err
+	}
+
+	go mpu.readSensors()
+
+	// Give the IMU time to fully initialize and then clear out any bad values from the averages.
+	time.Sleep(500 * time.Millisecond) // Make sure it's ready
+	<-mpu.CAvg
+
+	return mpu, nil
+}
+
+// SetGyroSensitivity sets the gyro sensitivity of the LSM9DS1; it must be one of the following values:
+// 250, 500, 2000 (all in deg/s).
+func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int) (err error) {
+	var sensGyro byte
+
+	switch sensitivityGyro {
+	case 2000:
+		sensGyro = BITS_GYRO_2000
+		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
+	// case 1000:
+	// 	sensGyro = BITS_FS_1000DPS
+	// 	mpu.scaleGyro = 1000.0 / float64(math.MaxInt16)
+	case 500:
+		sensGyro = BITS_GYRO_500
+		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
+	case 250:
+		sensGyro = BITS_GYRO_250
+		lsm.scaleGyro = 250.0 / float64(math.MaxInt16)
+	default:
+		err = fmt.Errorf("LSM9DS1 Error: %d is not a valid gyro sensitivity", sensitivityGyro)
+	}
+
+	if errWrite := lsm.i2cWrite(CTRL_REG1_G, sensGyro); errWrite != nil {
+		err = errors.New("LSM9DS1 Error: couldn't set gyro sensitivity")
+	}
+
+	return
+}
+
+// SetAccelSensitivity sets the accelerometer sensitivity of the LSM9DS1; it must be one of the following values:
+// 2, 4, 8, 16, all in G (gravity).
+func (lsm *LSM9DS1) SetAccelSensitivity(sensitivityAccel int) (err error) {
+	var sensAccel byte
+
+	switch sensitivityAccel {
+	case 16:
+		sensAccel = BITS_ACCEL_16G
+		lsm.scaleAccel = 16.0 / float64(math.MaxInt16)
+	case 8:
+		sensAccel = BITS_ACCEL_8G
+		lsm.scaleAccel = 8.0 / float64(math.MaxInt16)
+	case 4:
+		sensAccel = BITS_ACCEL_4G
+		lsm.scaleAccel = 4.0 / float64(math.MaxInt16)
+	case 2:
+		sensAccel = BITS_ACCEL_2G
+		lsm.scaleAccel = 2.0 / float64(math.MaxInt16)
+	default:
+		err = fmt.Errorf("LSM9DS1 Error: %d is not a valid accel sensitivity", sensitivityAccel)
+	}
+
+	if errWrite := lsm.i2cWrite(CTRL_REG6_XL, sensAccel); errWrite != nil {
+		err = errors.New("LSM9DS1 Error: couldn't set accel sensitivity")
+	}
+
+	return
+}
+
 /*******Probably Don't Need These***************\
 // EnableGyroBiasCal enables or disables motion bias compensation for the gyro.
 // For flying we generally do not want this!
 // func (mpu *MPU9250) EnableGyroBiasCal(enable bool) error {
-// 	enableRegs := []byte{0xb8, 0xaa, 0xb3, 0x8d, 0xb4, 0x98, 0x0d, 0x35, 0x5d}
-// 	disableRegs := []byte{0xb8, 0xaa, 0xaa, 0xaa, 0xb0, 0x88, 0xc3, 0xc5, 0xc7}
-
-// 	if enable {
-// 		if err := mpu.memWrite(CFG_MOTION_BIAS, &enableRegs); err != nil {
-// 			return errors.New("Unable to enable motion bias compensation")
-// 		}
-// 	} else {
-// 		if err := mpu.memWrite(CFG_MOTION_BIAS, &disableRegs); err != nil {
-// 			return errors.New("Unable to disable motion bias compensation")
-// 		}
-// 	}
-
-// 	return nil
 // }
 
 //******memwrite function********\\
 // func (mpu *MPU9250) memWrite(addr uint16, data *[]byte) error {
-// 	var err error
-// 	var tmp = make([]byte, 2)
-
-// 	tmp[0] = byte(addr >> 8)
-// 	tmp[1] = byte(addr & 0xFF)
-
-// 	// Check memory bank boundaries
-// 	if tmp[1]+byte(len(*data)) > MPU_BANK_SIZE {
-// 		return errors.New("Bad address: writing outside of memory bank boundaries")
-// 	}
-
-// 	err = mpu.i2cbus.WriteToReg(MPU_ADDRESS, MPUREG_BANK_SEL, tmp)
-// 	if err != nil {
-// 		return fmt.Errorf("MPU9250 Error selecting memory bank: %s\n", err)
-// 	}
-
-// 	err = mpu.i2cbus.WriteToReg(MPU_ADDRESS, MPUREG_MEM_R_W, *data)
-// 	if err != nil {
-// 		return fmt.Errorf("MPU9250 Error writing to the memory bank: %s\n", err)
-// 	}
-
-// 	return nil
 // }
 
 
@@ -99,83 +290,11 @@ type LSM9DS1 struct {
 // ReadAccelBias reads the bias accelerometer value stored on the chip.
 // These values are set at the factory.
 func (mpu *MPU9250) ReadAccelBias(sensitivityAccel int) error {
-	a0x, err := mpu.i2cRead2(MPUREG_XA_OFFSET_H)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
-	}
-	a0y, err := mpu.i2cRead2(MPUREG_YA_OFFSET_H)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
-	}
-	a0z, err := mpu.i2cRead2(MPUREG_ZA_OFFSET_H)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadAccelBias error reading chip")
-	}
-
-	switch sensitivityAccel {
-	case 16:
-		mpu.a01 = float64(a0x >> 1)
-		mpu.a02 = float64(a0y >> 1)
-		mpu.a03 = float64(a0z >> 1)
-	case 8:
-		mpu.a01 = float64(a0x)
-		mpu.a02 = float64(a0y)
-		mpu.a03 = float64(a0z)
-	case 4:
-		mpu.a01 = float64(a0x << 1)
-		mpu.a02 = float64(a0y << 1)
-		mpu.a03 = float64(a0z << 1)
-	case 2:
-		mpu.a01 = float64(a0x << 2)
-		mpu.a02 = float64(a0y << 2)
-		mpu.a03 = float64(a0z << 2)
-	default:
-		return fmt.Errorf("MPU9250 Error: %d is not a valid acceleration sensitivity", sensitivityAccel)
-	}
-
-	log.Printf("MPU9250 Info: accel hardware bias read: %6f %6f %6f\n", mpu.a01, mpu.a02, mpu.a03)
-	return nil
 }
 
 // ReadGyroBias reads the bias gyro value stored on the chip.
 // These values are set at the factory.
 func (mpu *MPU9250) ReadGyroBias(sensitivityGyro int) error {
-	g0x, err := mpu.i2cRead2(MPUREG_XG_OFFS_USRH)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
-	}
-	g0y, err := mpu.i2cRead2(MPUREG_YG_OFFS_USRH)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
-	}
-	g0z, err := mpu.i2cRead2(MPUREG_ZG_OFFS_USRH)
-	if err != nil {
-		return errors.New("MPU9250 Error: ReadGyroBias error reading chip")
-	}
-
-	switch sensitivityGyro {
-	case 2000:
-		mpu.g01 = float64(g0x >> 1)
-		mpu.g02 = float64(g0y >> 1)
-		mpu.g03 = float64(g0z >> 1)
-	case 1000:
-		mpu.g01 = float64(g0x)
-		mpu.g02 = float64(g0y)
-		mpu.g03 = float64(g0z)
-	case 500:
-		mpu.g01 = float64(g0x << 1)
-		mpu.g02 = float64(g0y << 1)
-		mpu.g03 = float64(g0z << 1)
-	case 250:
-		mpu.g01 = float64(g0x << 2)
-		mpu.g02 = float64(g0y << 2)
-		mpu.g03 = float64(g0z << 2)
-	default:
-		return fmt.Errorf("MPU9250 Error: %d is not a valid gyro sensitivity", sensitivityGyro)
-	}
-
-	log.Printf("MPU9250 Info: Gyro hardware bias read: %6f %6f %6f\n", mpu.g01, mpu.g02, mpu.g03)
-	return nil
 }
 */
 

@@ -3,7 +3,21 @@ package lsm9ds1
 const (
 	LSM_ADDRESS               = 0x6A
 	LSM_MAG_ADDRESS			  = 0x1C
-	
+
+	CTRL_REG1_G				  = 0x10
+	//TODO See 7.12 Table 46/47 for ODR values
+	BITS_GYRO_250			  = 0x00
+	BITS_GYRO_500			  = 0x08
+	BITS_GYRO_2000			  = 0x18
+
+	CTRL_REG6_XL			  = 0x20
+	//TODO See 7.24 Table 68 for ODR values
+	BITS_ACCEL_2G			  = 0x00
+	BITS_ACCEL_4G			  = 0x10
+	BITS_ACCEL_8G			  = 0x18
+	BITS_ACCEL_16G			  = 0x08
+
+	//OLD MPU9250 REGISTERS//
 	MPUREG_X_FINE_GAIN        = 0x03
 	MPUREG_Y_FINE_GAIN        = 0x04
 	MPUREG_Z_FINE_GAIN        = 0x05
