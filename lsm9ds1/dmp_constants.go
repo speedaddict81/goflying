@@ -4,11 +4,20 @@ const (
 	LSM_ADDRESS               = 0x6A
 	LSM_MAG_ADDRESS			  = 0x1C
 
+
 	CTRL_REG1_G				  = 0x10
-	//TODO See 7.12 Table 46/47 for ODR values
+	//TODO See 3.2 and 7.12 Table 46/47 for ODR values
+	BITS_ODR_RATE_15		  = 0x20
+	BITS_ODR_RATE_59		  = 0x40
+	BITS_ODR_RATE_119		  = 0x60
+	BITS_ODR_RATE_238		  = 0x80
 	BITS_GYRO_250			  = 0x00
 	BITS_GYRO_500			  = 0x08
 	BITS_GYRO_2000			  = 0x18
+
+	CTRL_REG3_G				  = 0x12
+	BITS_LP_MODE_EN			  = 0x80
+	BITS_LP_MODE_DIS		  = 0x00
 
 	CTRL_REG6_XL			  = 0x20
 	//TODO See 7.24 Table 68 for ODR values

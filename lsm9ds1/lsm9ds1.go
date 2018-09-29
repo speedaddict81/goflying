@@ -65,8 +65,11 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 
 	// Initialization of MPU
 	// Reset device.
-	//TODO Determine if needed
-	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, BIT_H_RESET); err != nil {
+	//TODO Set ODR Rate based on sample rate
+	// 		100hz sample rate: ODR 119hz (low power, set )
+	//		50hz sample rate: ODR 119hz (low power, set )
+	//		10hz sample rate: ODR 15hz (low power, set)
+	// if err := lsm.i2cWrite(CTRL_REG1_G, BIT_H_RESET); err != nil {
 	// 	return nil, errors.New(fmt.Sprintf("Error resetting LSM9DS1: %s", err))
 	// }
 
@@ -113,16 +116,18 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	}
 
 	// Turn off FIFO buffer
-	if err := mpu.i2cWrite(MPUREG_FIFO_EN, 0x00); err != nil {
-		return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable FIFO: %s", err))
-	}
+	// TODO LSM should be no issue leaving on
+	// if err := mpu.i2cWrite(MPUREG_FIFO_EN, 0x00); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable FIFO: %s", err))
+	// }
 
 	// Turn off interrupts
-	if err := mpu.i2cWrite(MPUREG_INT_ENABLE, 0x00); err != nil {
-		return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable interrupts: %s", err))
-	}
+	// LSM Off by default
+	// if err := mpu.i2cWrite(MPUREG_INT_ENABLE, 0x00); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable interrupts: %s", err))
+	// }
 
-	// Set up magnetometer
+	// TODO Set up magnetometer
 	if mpu.enableMag {
 		if err := mpu.ReadMagCalibration(); err != nil {
 			return nil, errors.New(fmt.Sprintf("Error reading calibration from magnetometer: %s", err))
@@ -184,6 +189,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, INV_CLK_PLL); err != nil {
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
 	}
+
 	// Turn off all sensors -- Not sure if necessary, but it's in the InvenSense DMP driver
 	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x63); err != nil {
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
@@ -194,27 +200,29 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
 	}
 
-	if applyHWOffsets {
-		if err := mpu.ReadAccelBias(sensitivityAccel); err != nil {
-			return nil, err
-		}
-		if err := mpu.ReadGyroBias(sensitivityGyro); err != nil {
-			return nil, err
-		}
-	}
+	//LSM No HW Offsets
+	// if applyHWOffsets {
+	// 	if err := mpu.ReadAccelBias(sensitivityAccel); err != nil {
+	// 		return nil, err
+	// 	}
+	// 	if err := mpu.ReadGyroBias(sensitivityGyro); err != nil {
+	// 		return nil, err
+	// 	}
+	// }
 
 	// Usually we don't want the automatic gyro bias compensation - it pollutes the gyro in a non-inertial frame.
-	if err := mpu.EnableGyroBiasCal(false); err != nil {
-		return nil, err
-	}
+	// LSM No gyro bias
+	// if err := mpu.EnableGyroBiasCal(false); err != nil {
+	// 	return nil, err
+	// }
 
 	go mpu.readSensors()
 
 	// Give the IMU time to fully initialize and then clear out any bad values from the averages.
 	time.Sleep(500 * time.Millisecond) // Make sure it's ready
-	<-mpu.CAvg
+	<-lsm.CAvg
 
-	return mpu, nil
+	return lsm, nil
 }
 
 // SetGyroSensitivity sets the gyro sensitivity of the LSM9DS1; it must be one of the following values:
