@@ -56,7 +56,8 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	var lsm = new(LSM9DS1)
 
 	lsm.sampleRate = sampleRate
-	lsm.enableMag = enableMag
+	//lsm.enableMag = enableMag
+	lsm.enableMag = false
 
 	lsm.i2cbus = embd.NewI2CBus(1)
 
@@ -65,7 +66,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 
 	// Initialization of MPU
 	// Reset device.
-	//TODO Set ODR Rate based on sample rate
+	//TODO Set ODR Rate based on sample rate, use SetSampleRate function
 	// 		100hz sample rate: ODR 119hz (low power, set )
 	//		50hz sample rate: ODR 119hz (low power, set )
 	//		10hz sample rate: ODR 15hz (low power, set)
@@ -90,12 +91,8 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	// }
 
 	// Set Gyro and Accel sensitivities
-	if err := lsm.SetGyroSensitivity(sensitivityGyro); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 gyro sensitivity: %s", err))
-	}
-
-	if err := lsm.SetAccelSensitivity(sensitivityAccel); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 accel sensitivity: %s", err))
+	if err := lsm.SetupGyroAccel(sampleRate, sensitivityGyro, sensitivityAccel); err != nil {
+		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1 gyro/accel: %s", err))
 	}
 
 	//TODO WIP Determine LSM-MPU differences
@@ -110,10 +107,6 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Accel LPF: %s", err))
 	}
 
-	// Set sample rate to chosen
-	if err := mpu.SetSampleRate(sampRate); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Sample Rate: %s", err))
-	}
 
 	// Turn off FIFO buffer
 	// TODO LSM should be no issue leaving on
@@ -128,7 +121,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	// }
 
 	// TODO Set up magnetometer
-	if mpu.enableMag {
+	if lsm.enableMag {
 		if err := mpu.ReadMagCalibration(); err != nil {
 			return nil, errors.New(fmt.Sprintf("Error reading calibration from magnetometer: %s", err))
 		}
@@ -185,20 +178,21 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 		time.Sleep(100 * time.Millisecond) // Make sure mag is ready
 	}
 
+	//TODO Determine necessity
 	// Set clock source to PLL
 	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, INV_CLK_PLL); err != nil {
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
 	}
 
 	// Turn off all sensors -- Not sure if necessary, but it's in the InvenSense DMP driver
-	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x63); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
-	}
-	time.Sleep(100 * time.Millisecond)
-	// Turn on all gyro, all accel
-	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x00); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
-	}
+	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x63); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	// }
+	// time.Sleep(100 * time.Millisecond)
+	// // Turn on all gyro, all accel
+	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x00); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	// }
 
 	//LSM No HW Offsets
 	// if applyHWOffsets {
@@ -225,18 +219,60 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	return lsm, nil
 }
 
+//TODO WIP
+// SetupGyroAccel sets the ODR (sample) rate, Accel, and Gyro Sensistivities
+func (lsm *LSM9DS1) SetupGyroAccel(rate int, sensitivityGyro int, sensitivityAccel int) (err error) {
+	var r byte
+	var lowPower bool = false
+	// BITS_ODR_RATE_15		  = 0x20
+	// BITS_ODR_RATE_59		  = 0x40
+	// BITS_ODR_RATE_119		  = 0x60
+	// BITS_ODR_RATE_238		  = 0x80
+
+	//TODO Decide if we should set lsm.sampleRate to actual rate used
+	switch {
+	case (rate >= 119):
+		r = BITS_ODR_RATE_238
+	case (rate >= 60):
+		r = BITS_ODR_RATE_119
+		lowPower = true
+	case (rate > 15):
+		r = BITS_ODR_RATE_59
+		lowPower = true
+	default:
+		r = BITS_ODR_RATE_15
+		lowPower = true
+	}
+
+	if err := lsm.SetGyroSensitivity(sensitivityGyro, r); err != nil {
+		return
+	}
+
+	//set accelerometer sensitivity
+	if err := lsm.SetAccelSensitivity(sensitivityAccel); err != nil {
+		return
+	}
+
+	if err := lsm.SetPowerLevel(lowPower); err != nil {
+		return
+	}
+
+	return
+}
+
 // SetGyroSensitivity sets the gyro sensitivity of the LSM9DS1; it must be one of the following values:
 // 250, 500, 2000 (all in deg/s).
-func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int) (err error) {
+func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err error) {
 	var sensGyro byte
 
 	switch sensitivityGyro {
 	case 2000:
 		sensGyro = BITS_GYRO_2000
 		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
-	// case 1000:
-	// 	sensGyro = BITS_FS_1000DPS
-	// 	mpu.scaleGyro = 1000.0 / float64(math.MaxInt16)
+	// 1000 is not a valid DPS for LMS, default to 500DPS
+	case 1000:
+		sensGyro = BITS_GYRO_500
+		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
 	case 500:
 		sensGyro = BITS_GYRO_500
 		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
@@ -244,11 +280,14 @@ func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int) (err error) {
 		sensGyro = BITS_GYRO_250
 		lsm.scaleGyro = 250.0 / float64(math.MaxInt16)
 	default:
+		//TODO Decide if 500 is an acceptable default, if so fix and remove return
 		err = fmt.Errorf("LSM9DS1 Error: %d is not a valid gyro sensitivity", sensitivityGyro)
+		return
 	}
 
-	if errWrite := lsm.i2cWrite(CTRL_REG1_G, sensGyro); errWrite != nil {
-		err = errors.New("LSM9DS1 Error: couldn't set gyro sensitivity")
+	//TODO Check syntax for bitwise AND
+	if errWrite := lsm.i2cWrite(CTRL_REG1_G, sensGyro&rateBits); errWrite != nil {
+		err = errors.New("LSM9DS1 Error: couldn't set gyro sensitivity and sample rate")
 	}
 
 	return
@@ -278,6 +317,24 @@ func (lsm *LSM9DS1) SetAccelSensitivity(sensitivityAccel int) (err error) {
 
 	if errWrite := lsm.i2cWrite(CTRL_REG6_XL, sensAccel); errWrite != nil {
 		err = errors.New("LSM9DS1 Error: couldn't set accel sensitivity")
+	}
+
+	return
+}
+
+func (lsm *LSM9DS1) SetPowerLevel(lowPow bool) (err error) {
+	// CTRL_REG3_G				  = 0x12
+	// BITS_LP_MODE_EN			  = 0x80
+	// BITS_LP_MODE_DIS		  = 0x00
+	var pm byte
+	if lowPow{
+		pm = BITS_LP_MODE_EN
+	}
+	else {
+		pm = BITS_LP_MODE_DIS
+	}
+	if errWrite := lsm.i2cWrite(CTRL_REG3_G, pm); errWrite != nil {
+		err = errors.New("LSM9DS1 Error: couldn't set power level")
 	}
 
 	return
