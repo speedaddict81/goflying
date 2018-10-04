@@ -231,7 +231,7 @@ func (lsm *LSM9DS1) SetupGyroAccel(rate int, sensitivityGyro int, sensitivityAcc
 
 	//TODO Decide if we should set lsm.sampleRate to actual rate used
 	switch {
-	case (rate >= 119):
+	case (rate >= 120):
 		r = BITS_ODR_RATE_238
 	case (rate >= 60):
 		r = BITS_ODR_RATE_119
