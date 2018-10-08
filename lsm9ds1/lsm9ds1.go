@@ -64,63 +64,51 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	//*****Chip Initialization******\\
 	//TODO Use LSM Chip initialization as needed (set ODR, sleep mode setting, etc)
 
-	// Initialization of MPU
-	// Reset device.
-	//TODO Set ODR Rate based on sample rate, use SetSampleRate function
-	// 		100hz sample rate: ODR 119hz (low power, set )
-	//		50hz sample rate: ODR 119hz (low power, set )
-	//		10hz sample rate: ODR 15hz (low power, set)
-	// if err := lsm.i2cWrite(CTRL_REG1_G, BIT_H_RESET); err != nil {
+	// TODO Determine if needed (Reset device defaults)
+	// if err := lsm.i2cWrite(????, BIT_H_RESET); err != nil {
 	// 	return nil, errors.New(fmt.Sprintf("Error resetting LSM9DS1: %s", err))
 	// }
 
-	//TODO Determine if needed
-	// Note: the following is in inv_mpu.c, but doesn't appear to be necessary from the MPU-9250 register map.
-	// Wake up chip.
+	//TODO Determine if needed (Wake up chip)
 	// time.Sleep(100 * time.Millisecond)
 	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, 0x00); err != nil {
 	// 	return nil, errors.New(fmt.Sprintf("Error waking LSM9DS1: %s", err))
 	// }
 
-	// Note: inv_mpu.c sets some registers here to allocate 1kB to the FIFO buffer and 3kB to the DMP.
-	// It doesn't seem to be supported in the 1.6 version of the register map and we're not using FIFO anyway,
-	// so we skip this.
-	// Don't let FIFO overwrite DMP data
-	// if err := mpu.i2cWrite(MPUREG_ACCEL_CONFIG_2, BIT_FIFO_SIZE_1024|0x8); err != nil {
-	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
-	// }
-
 	// Set Gyro and Accel sensitivities
-	if err := lsm.SetupGyroAccel(sampleRate, sensitivityGyro, sensitivityAccel); err != nil {
+	if err := lsm.SetupGyroAndAccel(sampleRate, sensitivityGyro, sensitivityAccel); err != nil {
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1 gyro/accel: %s", err))
 	}
 
-	//TODO WIP Determine LSM-MPU differences
-	sampRate := byte(1000/mpu.sampleRate - 1)
+	//TODO WIP Determine LSM-MPU differences for LPFs
+	// sampRate := byte(1000/mpu.sampleRate - 1)
 	// Default: Set Gyro LPF to half of sample rate
-	if err := mpu.SetGyroLPF(sampRate >> 1); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Gyro LPF: %s", err))
-	}
+	// if err := mpu.SetGyroLPF(sampRate >> 1); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Gyro LPF: %s", err))
+	// }
 
 	// Default: Set Accel LPF to half of sample rate
-	if err := mpu.SetAccelLPF(sampRate >> 1); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Accel LPF: %s", err))
-	}
+	// if err := mpu.SetAccelLPF(sampRate >> 1); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting LSM9DS1 Accel LPF: %s", err))
+	// }
 
 
-	// Turn off FIFO buffer
-	// TODO LSM should be no issue leaving on
+	// TODO Turn off FIFO buffer
+	// For LSM should be no issue leaving on
 	// if err := mpu.i2cWrite(MPUREG_FIFO_EN, 0x00); err != nil {
 	// 	return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable FIFO: %s", err))
 	// }
 
-	// Turn off interrupts
+	// TODO Turn off interrupts
 	// LSM Off by default
 	// if err := mpu.i2cWrite(MPUREG_INT_ENABLE, 0x00); err != nil {
 	// 	return nil, errors.New(fmt.Sprintf("LSM9DS1 Error: couldn't disable interrupts: %s", err))
 	// }
 
 	// TODO Set up magnetometer
+	// The LSM will not use the slave model used in the MPU chip
+	// We will communicate directly using the correct I2C channel
+	// and Mag registers
 	if lsm.enableMag {
 		if err := mpu.ReadMagCalibration(); err != nil {
 			return nil, errors.New(fmt.Sprintf("Error reading calibration from magnetometer: %s", err))
@@ -194,7 +182,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
 	// }
 
-	//LSM No HW Offsets
+	//LSM Has no HW Offsets
 	// if applyHWOffsets {
 	// 	if err := mpu.ReadAccelBias(sensitivityAccel); err != nil {
 	// 		return nil, err
@@ -221,7 +209,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 
 //TODO WIP
 // SetupGyroAccel sets the ODR (sample) rate, Accel, and Gyro Sensistivities
-func (lsm *LSM9DS1) SetupGyroAccel(rate int, sensitivityGyro int, sensitivityAccel int) (err error) {
+func (lsm *LSM9DS1) SetupGyroAndAccel(rate int, sensitivityGyro int, sensitivityAccel int) (err error) {
 	var r byte
 	var lowPower bool = false
 	// BITS_ODR_RATE_15		  = 0x20
@@ -229,7 +217,8 @@ func (lsm *LSM9DS1) SetupGyroAccel(rate int, sensitivityGyro int, sensitivityAcc
 	// BITS_ODR_RATE_119		  = 0x60
 	// BITS_ODR_RATE_238		  = 0x80
 
-	//TODO Decide if we should set lsm.sampleRate to actual rate used
+	//TODO Decide if we should set lsm.sampleRate to actual rate used so LPF can be set
+	// Stratux uses sample rate of 50Hz and LPF of 20 or 21 Hz 
 	switch {
 	case (rate >= 120):
 		r = BITS_ODR_RATE_238
@@ -269,10 +258,10 @@ func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err 
 	case 2000:
 		sensGyro = BITS_GYRO_2000
 		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
-	// 1000 is not a valid DPS for LMS, default to 500DPS
+	// 1000 is not a valid DPS for LMS, default to 2000DPS
 	case 1000:
-		sensGyro = BITS_GYRO_500
-		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
+		sensGyro = BITS_GYRO_2000
+		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
 	case 500:
 		sensGyro = BITS_GYRO_500
 		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
@@ -285,7 +274,7 @@ func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err 
 		return
 	}
 
-	//TODO Check syntax for bitwise AND
+	//TODO Check Go syntax for proper use of bitwise AND
 	if errWrite := lsm.i2cWrite(CTRL_REG1_G, sensGyro&rateBits); errWrite != nil {
 		err = errors.New("LSM9DS1 Error: couldn't set gyro sensitivity and sample rate")
 	}
@@ -339,6 +328,59 @@ func (lsm *LSM9DS1) SetPowerLevel(lowPow bool) (err error) {
 
 	return
 }
+
+//TODO LSM doesn't have mutable LPF that I can find
+// SetGyroLPF sets the low pass filter for the gyro.
+// func (lsm *LSM9DS1) SetGyroLPF(rate byte) (err error) {
+// 	var r byte
+// 	switch {
+// 	case rate >= 188:
+// 		r = BITS_DLPF_CFG_188HZ
+// 	case rate >= 98:
+// 		r = BITS_DLPF_CFG_98HZ
+// 	case rate >= 42:
+// 		r = BITS_DLPF_CFG_42HZ
+// 	case rate >= 20:
+// 		r = BITS_DLPF_CFG_20HZ
+// 	case rate >= 10:
+// 		r = BITS_DLPF_CFG_10HZ
+// 	default:
+// 		r = BITS_DLPF_CFG_5HZ
+// 	}
+
+// 	errWrite := mpu.i2cWrite(MPUREG_CONFIG, r)
+// 	if errWrite != nil {
+// 		err = fmt.Errorf("MPU9250 Error: couldn't set Gyro LPF: %s", errWrite)
+// 	}
+// 	return
+// }
+
+//TODO LSM has no user-defined LPF
+// SetAccelLPF sets the low pass filter for the accelerometer.
+// func (lsm *LSM9DS1) SetAccelLPF(rate byte) (err error) {
+// 	var r byte
+// 	switch {
+// 	case rate >= 218:
+// 		r = BITS_DLPF_CFG_188HZ
+// 	case rate >= 99:
+// 		r = BITS_DLPF_CFG_98HZ
+// 	case rate >= 45:
+// 		r = BITS_DLPF_CFG_42HZ
+// 	case rate >= 21:
+// 		r = BITS_DLPF_CFG_20HZ
+// 	case rate >= 10:
+// 		r = BITS_DLPF_CFG_10HZ
+// 	default:
+// 		r = BITS_DLPF_CFG_5HZ
+// 	}
+
+// 	errWrite := mpu.i2cWrite(MPUREG_ACCEL_CONFIG_2, r)
+// 	if errWrite != nil {
+// 		err = fmt.Errorf("LSM9DS1 Error: couldn't set Accel LPF: %s", errWrite)
+// 	}
+// 	return
+// }
+
 
 /*******Probably Don't Need These***************\
 // EnableGyroBiasCal enables or disables motion bias compensation for the gyro.
