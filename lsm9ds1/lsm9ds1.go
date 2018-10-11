@@ -80,7 +80,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1 gyro/accel: %s", err))
 	}
 
-	//TODO WIP Determine LSM-MPU differences for LPFs
+	//TODO Determine if LSM has hidden access to LPFs
 	// sampRate := byte(1000/mpu.sampleRate - 1)
 	// Default: Set Gyro LPF to half of sample rate
 	// if err := mpu.SetGyroLPF(sampRate >> 1); err != nil {
@@ -114,63 +114,36 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 			return nil, errors.New(fmt.Sprintf("Error reading calibration from magnetometer: %s", err))
 		}
 
-		// Set up AK8963 master mode, master clock and ES bit
-		if err := mpu.i2cWrite(MPUREG_I2C_MST_CTRL, 0x40); err != nil {
+		//TODO LSM mag power up, if needed
+		if err := mpu.i2cMagWrite(MPUREG_I2C_MST_CTRL, 0x40); err != nil {
 			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
 		}
-		// Slave 0 reads from AK8963
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_ADDR, BIT_I2C_READ|AK8963_I2C_ADDR); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		//TODO Set mag sample rate to same as gyro/accel sample rate, up to max
+		var magBits byte
+		switch {
+			case (lsm.sampleRate > 40):
+				magBits = BITS_MAG_RATE_80
+			case (rate > 20):
+				magBits = BITS_MAG_RATE_40
+			case (rate > 10):
+				magBits = BITS_MAG_RATE_20
+			default:
+				magBits = BITS_MAG_RATE_10
 		}
-		// Compass reads start at this register
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_REG, AK8963_ST1); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
+		//TODO Implement MagWrite fx
+		if err := lsm.i2cMagWrite(CTRL_REG1_M, magBits); err != nil {
+			return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1 magnetometer: %s", err))
 		}
-		// Enable 8-byte reads on slave 0
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV0_CTRL, BIT_SLAVE_EN|8); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-		// Slave 1 can change AK8963 measurement mode
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_ADDR, AK8963_I2C_ADDR); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_REG, AK8963_CNTL1); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-		// Enable 1-byte reads on slave 1
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_CTRL, BIT_SLAVE_EN|1); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-		// Set slave 1 data
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV1_DO, AKM_SINGLE_MEASUREMENT); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-		// Triggers slave 0 and 1 actions at each sample
-		if err := mpu.i2cWrite(MPUREG_I2C_MST_DELAY_CTRL, 0x03); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
-
-		// Set AK8963 sample rate to same as gyro/accel sample rate, up to max
-		var ak8963Rate byte
-		if mpu.sampleRate < AK8963_MAX_SAMPLE_RATE {
-			ak8963Rate = 0
-		} else {
-			ak8963Rate = byte(mpu.sampleRate/AK8963_MAX_SAMPLE_RATE - 1)
-		}
-
-		// Not so sure of this one--I2C Slave 4??!
-		if err := mpu.i2cWrite(MPUREG_I2C_SLV4_CTRL, ak8963Rate); err != nil {
-			return nil, errors.New(fmt.Sprintf("Error setting up AK8963: %s", err))
-		}
+	
 
 		time.Sleep(100 * time.Millisecond) // Make sure mag is ready
 	}
 
 	//TODO Determine necessity
 	// Set clock source to PLL
-	if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, INV_CLK_PLL); err != nil {
-		return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
-	}
+	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_1, INV_CLK_PLL); err != nil {
+	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
+	// }
 
 	// Turn off all sensors -- Not sure if necessary, but it's in the InvenSense DMP driver
 	// if err := mpu.i2cWrite(MPUREG_PWR_MGMT_2, 0x63); err != nil {
@@ -182,7 +155,7 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	// 	return nil, errors.New(fmt.Sprintf("Error setting up LSM9DS1: %s", err))
 	// }
 
-	//LSM Has no HW Offsets
+	//LSM Accel/gyro Has no HW Offsets
 	// if applyHWOffsets {
 	// 	if err := mpu.ReadAccelBias(sensitivityAccel); err != nil {
 	// 		return nil, err
@@ -207,7 +180,6 @@ func NewLSM9DS1(sensitivityGyro, sensitivityAccel, sampleRate int, enableMag boo
 	return lsm, nil
 }
 
-//TODO WIP
 // SetupGyroAccel sets the ODR (sample) rate, Accel, and Gyro Sensistivities
 func (lsm *LSM9DS1) SetupGyroAndAccel(rate int, sensitivityGyro int, sensitivityAccel int) (err error) {
 	var r byte
@@ -252,21 +224,21 @@ func (lsm *LSM9DS1) SetupGyroAndAccel(rate int, sensitivityGyro int, sensitivity
 // SetGyroSensitivity sets the gyro sensitivity of the LSM9DS1; it must be one of the following values:
 // 250, 500, 2000 (all in deg/s).
 func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err error) {
-	var sensGyro byte
+	var gyroBits byte
 
 	switch sensitivityGyro {
 	case 2000:
-		sensGyro = BITS_GYRO_2000
+		gyroBits = BITS_GYRO_2000
 		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
 	// 1000 is not a valid DPS for LMS, default to 2000DPS
 	case 1000:
-		sensGyro = BITS_GYRO_2000
+		gyroBits = BITS_GYRO_2000
 		lsm.scaleGyro = 2000.0 / float64(math.MaxInt16)
 	case 500:
-		sensGyro = BITS_GYRO_500
+		gyroBits = BITS_GYRO_500
 		lsm.scaleGyro = 500.0 / float64(math.MaxInt16)
 	case 250:
-		sensGyro = BITS_GYRO_250
+		gyroBits = BITS_GYRO_250
 		lsm.scaleGyro = 250.0 / float64(math.MaxInt16)
 	default:
 		//TODO Decide if 500 is an acceptable default, if so fix and remove return
@@ -274,8 +246,9 @@ func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err 
 		return
 	}
 
-	//TODO Check Go syntax for proper use of bitwise AND
-	if errWrite := lsm.i2cWrite(CTRL_REG1_G, sensGyro&rateBits); errWrite != nil {
+	//TODO Check Go syntax for proper use of bitwise OR, combine and check
+	//		for acceptability prior to usage
+	if errWrite := lsm.i2cWrite(CTRL_REG1_G, gyroBits | rateBits); errWrite != nil {
 		err = errors.New("LSM9DS1 Error: couldn't set gyro sensitivity and sample rate")
 	}
 
@@ -285,26 +258,26 @@ func (lsm *LSM9DS1) SetGyroSensitivity(sensitivityGyro int, rateBits byte) (err 
 // SetAccelSensitivity sets the accelerometer sensitivity of the LSM9DS1; it must be one of the following values:
 // 2, 4, 8, 16, all in G (gravity).
 func (lsm *LSM9DS1) SetAccelSensitivity(sensitivityAccel int) (err error) {
-	var sensAccel byte
+	var accelBits byte
 
 	switch sensitivityAccel {
 	case 16:
-		sensAccel = BITS_ACCEL_16G
+		accelBits = BITS_ACCEL_16G
 		lsm.scaleAccel = 16.0 / float64(math.MaxInt16)
 	case 8:
-		sensAccel = BITS_ACCEL_8G
+		accelBits = BITS_ACCEL_8G
 		lsm.scaleAccel = 8.0 / float64(math.MaxInt16)
 	case 4:
-		sensAccel = BITS_ACCEL_4G
+		accelBits = BITS_ACCEL_4G
 		lsm.scaleAccel = 4.0 / float64(math.MaxInt16)
 	case 2:
-		sensAccel = BITS_ACCEL_2G
+		accelBits = BITS_ACCEL_2G
 		lsm.scaleAccel = 2.0 / float64(math.MaxInt16)
 	default:
 		err = fmt.Errorf("LSM9DS1 Error: %d is not a valid accel sensitivity", sensitivityAccel)
 	}
 
-	if errWrite := lsm.i2cWrite(CTRL_REG6_XL, sensAccel); errWrite != nil {
+	if errWrite := lsm.i2cWrite(CTRL_REG6_XL, accelBits); errWrite != nil {
 		err = errors.New("LSM9DS1 Error: couldn't set accel sensitivity")
 	}
 
@@ -381,6 +354,192 @@ func (lsm *LSM9DS1) SetPowerLevel(lowPow bool) (err error) {
 // 	return
 // }
 
+//TODO WIP
+func (lsm *LSM9DS1) readSensors() {
+	var (
+		g1, g2, g3, a1, a2, a3, m1, m2, m3, m4, tmp int16   // Current values
+		avg1, avg2, avg3, ava1, ava2, ava3, avtmp   float64 // Accumulators for averages
+		avm1, avm2, avm3                            int32
+		n, nm                                       float64
+		gaError, magError                           error
+		t0, t, t0m, tm                              time.Time
+		magSampleRate                               int
+		curdata                                     *MPUData
+	)
+
+	//TODO MPU was little endian (Reference?), LSM is 2s complement, little endian? 7.26
+	acRegMap := map[*int16]byte{
+		&g1: LSM_OUT_X_L_G, &g2: LSM_OUT_Y_L_G, &g3: LSM_OUT_Z_L_G,
+		&a1: LSM_OUT_X_L_XL, &a2: LSM_OUT_Y_L_XL, &a3: LSM_OUT_Z_L_XL,
+		&tmp: LSM_OUT_TEMP_L,
+	}
+	//TODO LSM Register updates for magnetometer m4?
+	// magRegMap := map[*int16]byte{
+	// 	&m1: LSM_OUT_X_L_M, &m2: LSM_OUT_Y_L_M, &m3: LSM_OUT_Z_L_M, &m4: MPUREG_EXT_SENS_DATA_06,
+	// }
+
+	//TODO Determine acceptable Gyro/Accel/Mag rates for LSM
+	if lsm.sampleRate >= 80 {
+		magSampleRate = 80
+	} else {
+		magSampleRate = lsm.sampleRate
+	}
+
+	cC := make(chan *LSMData)
+	defer close(cC)
+	lsm.C = cC
+	cAvg := make(chan *LSMData)
+	defer close(cAvg)
+	lsm.CAvg = cAvg
+	cBuf := make(chan *LSMData, bufSize)
+	defer close(cBuf)
+	lsm.CBuf = cBuf
+	lsm.cClose = make(chan bool)
+	defer close(lsm.cClose)
+
+	// TODO Run ticker at chosen sample rate, not ODR Rate
+	//		fix formula to use lsm.sampleRate data type
+	clock := time.NewTicker(time.Duration(int(1000.0/float32(lsm.sampleRate)+0.5)) * time.Millisecond)
+	//TODO westphae: use the clock to record actual time instead of a timer
+	defer clock.Stop()
+
+	// TODO Tick at same rate as magnetometer, or slower
+	clockMag := time.NewTicker(time.Duration(int(1000.0/float32(magSampleRate)+0.5)) * time.Millisecond)
+	t0 = time.Now()
+	t0m = time.Now()
+
+	makeLSMData := func() *LSMData {
+		d := LSMData{
+			G1:      (float64(g1) - lsm.g01) * lsm.scaleGyro,
+			G2:      (float64(g2) - lsm.g02) * lsm.scaleGyro,
+			G3:      (float64(g3) - lsm.g03) * lsm.scaleGyro,
+			A1:      (float64(a1) - lsm.a01) * lsm.scaleAccel,
+			A2:      (float64(a2) - lsm.a02) * lsm.scaleAccel,
+			A3:      (float64(a3) - lsm.a03) * lsm.scaleAccel,
+			M1:      float64(m1) * lsm.mcal1,
+			M2:      float64(m2) * lsm.mcal2,
+			M3:      float64(m3) * lsm.mcal3,
+			Temp:    float64(tmp)/340 + 36.53,
+			GAError: gaError, MagError: magError,
+			N: 1, 
+			NM: 1,
+			T: t, 
+			TM: tm,
+			DT: time.Duration(0), 
+			DTM: time.Duration(0),
+		}
+		if gaError != nil {
+			d.N = 0
+		}
+		if magError != nil {
+			d.NM = 0
+		}
+		return &d
+	}
+
+	makeAvgLSMData := func() *LSMData {
+		d := MPUData{}
+		if n > 0.5 {
+			d.G1 = (avg1/n - lsm.g01) * lsm.scaleGyro
+			d.G2 = (avg2/n - lsm.g02) * lsm.scaleGyro
+			d.G3 = (avg3/n - lsm.g03) * lsm.scaleGyro
+			d.A1 = (ava1/n - lsm.a01) * lsm.scaleAccel
+			d.A2 = (ava2/n - lsm.a02) * lsm.scaleAccel
+			d.A3 = (ava3/n - lsm.a03) * lsm.scaleAccel
+			d.Temp = (float64(avtmp)/n)/340 + 36.53
+			d.N = int(n + 0.5)
+			d.T = t
+			d.DT = t.Sub(t0)
+		} else {
+			d.GAError = errors.New("LSM9DS1 Warning: No new accel/gyro values")
+		}
+		if nm > 0 {
+			d.M1 = float64(avm1) * lsm.mcal1 / nm
+			d.M2 = float64(avm2) * lsm.mcal2 / nm
+			d.M3 = float64(avm3) * lsm.mcal3 / nm
+			d.NM = int(nm + 0.5)
+			d.TM = tm
+			d.DTM = t.Sub(t0m)
+		} else {
+			d.MagError = errors.New("LSM9DS1 Warning: No new magnetometer values")
+		}
+		return &d
+	}
+
+	for {
+		select {
+		case t = <-clock.C: // Read accel/gyro data:
+			for p, reg := range acRegMap {
+				//TODO Replace with actual I2C readWord
+				*p, gaError = lsm.i2cReadWord(LSM_GA_ADDRESS, reg)
+				if gaError != nil {
+					log.Println("LSM9DS1 Warning: error reading gyro/accel")
+				}
+			}
+			curdata = makeLSMData()
+			// Update accumulated values and increment count of gyro/accel readings
+			avg1 += float64(g1)
+			avg2 += float64(g2)
+			avg3 += float64(g3)
+			ava1 += float64(a1)
+			ava2 += float64(a2)
+			ava3 += float64(a3)
+			avtmp += float64(tmp)
+			avm1 += int32(m1)
+			avm2 += int32(m2)
+			avm3 += int32(m3)
+			n++
+			select {
+			case cBuf <- curdata: // We update the buffer every time we read a new value.
+			default: // If buffer is full, remove oldest value and put in newest.
+				<-cBuf
+				cBuf <- curdata
+			}
+		case tm = <-clockMag.C: // Read magnetometer data:
+			//TODO Implement mag check for usage of m4 data in stratux/ahrs
+			if lsm.enableMag {
+				// Read the actual data
+				for p, reg := range magRegMap {
+					*p, magError = lsm.i2cReadWord(LSM_MAG_ADDRESS, reg)
+					if magError != nil {
+						log.Println("LSM9DS1 Warning: error reading magnetometer")
+					}
+				}
+
+				//TODO Determine if LSM needs new data and overflow checks
+				// Test validity of magnetometer data
+				// if (byte(m1&0xFF)&AKM_DATA_READY) == 0x00 && (byte(m1&0xFF)&AKM_DATA_OVERRUN) != 0x00 {
+				// 	log.Println("MPU9250 Warning: mag data not ready or overflow")
+				// 	log.Printf("MPU9250 Warning: m1 LSB: %X\n", byte(m1&0xFF))
+				// 	continue // Don't update the accumulated values
+				// }
+
+				// if (byte((m4>>8)&0xFF) & AKM_OVERFLOW) != 0x00 {
+				// 	log.Println("MPU9250 Warning: mag data overflow")
+				// 	log.Printf("MPU9250 Warning: m4 MSB: %X\n", byte((m1>>8)&0xFF))
+				// 	continue // Don't update the accumulated values
+				// }
+
+				// Update values and increment count of magnetometer readings
+				avm1 += int32(m1)
+				avm2 += int32(m2)
+				avm3 += int32(m3)
+				nm++
+			}
+		case cC <- curdata: // Send the latest values
+		case cAvg <- makeAvgLSMData(): // Send the averages
+			avg1, avg2, avg3 = 0, 0, 0
+			ava1, ava2, ava3 = 0, 0, 0
+			avm1, avm2, avm3 = 0, 0, 0
+			avtmp = 0
+			n, nm = 0, 0
+			t0, t0m = t, tm
+		case <-lsm.cClose: // Stop the goroutine, ease up on the CPU
+			break
+		}
+	}
+}
+
 
 /*******Probably Don't Need These***************\
 // EnableGyroBiasCal enables or disables motion bias compensation for the gyro.
@@ -405,10 +564,9 @@ func (mpu *MPU9250) ReadGyroBias(sensitivityGyro int) error {
 }
 */
 
-//TODO: We'll prefer to use the bare ReadWord function
-func (lsm *LSM9DS1) i2cRead2(register byte) (value int16, err error) {
+func (lsm *LSM9DS1) i2cReadWord(i2cChan byte, register byte) (value int16, err error) {
 
-	v, errWrite := lsm.i2cbus.ReadWordFromReg(LSM_ADDRESS, register)
+	v, errWrite := lsm.i2cbus.ReadWordFromReg(i2cChan, register)
 	if errWrite != nil {
 		err = fmt.Errorf("LSM9DS1 Error reading %x: %s\n", register, err)
 	} else {
@@ -416,4 +574,28 @@ func (lsm *LSM9DS1) i2cRead2(register byte) (value int16, err error) {
 	}
 	return
 }
+
+func (lsm *LSM9DS1) i2cWrite(register, value byte) (err error) {
+
+	if errWrite := lsm.i2cbus.WriteByteToReg(LSM_GA_ADDRESS, register, value); errWrite != nil {
+		err = fmt.Errorf("LSM9DS1 Error writing %X to %X: %s\n",
+			value, register, errWrite)
+	} else {
+		time.Sleep(time.Millisecond)
+	}
+	return
+}
+
+// This is a separate function to prevent writing on the wrong I2C channel
+func (lsm *LSM9DS1) i2cMagWrite(register, value byte) (err error) {
+
+	if errWrite := lsm.i2cbus.WriteByteToReg(LSM_MAG_ADDRESS, register, value); errWrite != nil {
+		err = fmt.Errorf("LSM9DS1 Error writing %X to %X: %s\n",
+			value, register, errWrite)
+	} else {
+		time.Sleep(time.Millisecond)
+	}
+	return
+}
+
 

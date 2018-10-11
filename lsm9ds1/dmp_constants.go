@@ -1,7 +1,7 @@
 package lsm9ds1
 
 const (
-	LSM_ADDRESS               = 0x6A
+	LSM_GA_ADDRESS            = 0x6A
 	LSM_MAG_ADDRESS			  = 0x1C
 
 
@@ -25,6 +25,38 @@ const (
 	BITS_ACCEL_4G			  = 0x10
 	BITS_ACCEL_8G			  = 0x18
 	BITS_ACCEL_16G			  = 0x08
+
+	LSM_OUT_TEMP_L			  = 0x15
+	LSM_OUT_TEMP_H			  = 0x16
+
+	LSM_OUT_X_L_G   	      = 0x18
+	LSM_OUT_X_H_G	          = 0x19
+	LSM_OUT_Y_L_G   	      = 0x1A
+	LSM_OUT_Y_H_G       	  = 0x1B
+	LSM_OUT_Z_L_G   	      = 0x1C
+	LSM_OUT_Z_H_G        	  = 0x1D
+
+	LSM_OUT_X_L_XL   	      = 0x28
+	LSM_OUT_X_H_XL	          = 0x29
+	LSM_OUT_Y_L_XL   	      = 0x2A
+	LSM_OUT_Y_H_XL       	  = 0x2B
+	LSM_OUT_Z_L_XL   	      = 0x2C
+	LSM_OUT_Z_H_XL        	  = 0x2D
+
+	CTRL_REG1_M				  = 0x20
+	BITS_MAG_RATE_10		  = 0x90
+	BITS_MAG_RATE_20		  = 0x94
+	BITS_MAG_RATE_40		  = 0x98
+	BITS_MAG_RATE_80		  = 0x9C
+
+	LSM_OUT_X_L_M   	      = 0x28
+	LSM_OUT_X_H_M	          = 0x29
+	LSM_OUT_Y_L_M   	      = 0x2A
+	LSM_OUT_Y_H_M       	  = 0x2B
+	LSM_OUT_Z_L_M   	      = 0x2C
+	LSM_OUT_Z_H_M        	  = 0x2D
+
+
 
 	//OLD MPU9250 REGISTERS//
 	MPUREG_X_FINE_GAIN        = 0x03
